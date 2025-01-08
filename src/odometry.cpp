@@ -1,7 +1,7 @@
 /*
  * @Author: DMU zhangxianglong
  * @Date: 2024-11-18 11:34:52
- * @LastEditTime: 2024-12-21 03:37:22
+ * @LastEditTime: 2025-01-08 23:50:08
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
  * @FilePath: /LO-DD/src/lidarOdometry.cpp
  * @Description: 实现激光里程计
@@ -231,14 +231,17 @@ public:
 
             if (feature_undistort->empty() || feature_undistort == NULL)
             {
-                RCLCPP_WARN_STREAM(this->get_logger(), "The feature_undistort is empty.");
+                RCLCPP_WARN_STREAM(this->get_logger(), "The feature_undistort is empty skip this scan.");
                 return;
             }
 
             state_now = kf.getState();
             // 计算lidar在世界坐标系下的位置
+            // 将 LiDAR 在局部坐标系中的偏移量（offset_T_L_I）通过旋转矩阵转换到世界坐标系下。
+            // 再加上当前系统（例如 IMU）在世界坐标系中的位置（position），最终得到 LiDAR 的世界坐标位置 LiDAR_position_w。
             LiDAR_position_w = state_now.position + state_now.rotation_matrix.matrix() * state_now.offset_T_L_I;
             
+            // 判断滤波器是否初始化成功
             if ((measurement.lidar_begin_time - first_lidar_time) < INIT_TIME) 
             {
                 ekf_is_inited = false;
