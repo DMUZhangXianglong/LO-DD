@@ -1,0 +1,46 @@
+/**:
+  ros__parameters:
+
+    # 坐标系标签
+    lidarFrame: "lidar"                                   # 雷达坐标系
+    mapFrame: "map"                                       # 世界地图坐标系
+
+
+    # 话题
+    pointCloudTopic: "/velodyne_points"                 # 点云话题
+    sensor: velodyne                                    # 传感器类型
+
+    # pointCloudTopic: "/rslidar_points"  
+    # sensor: robosense                                   # 传感器类型
+
+    # pointCloudTopic: "/os_cloud_node/points"              # 点云话题
+    # sensor: ouster                                        # 传感器类型
+
+    imuTopic: "/imu/data"                                          # IMU话题名
+    
+
+
+    # LiDAR参数
+    num_scans: 16                                         # LiDAR线数
+
+
+    # 
+    min_edge_pts: 20                                      # 最小角点数
+    min_surf_pts: 20                                      # 最小面点数
+    kf_distance: 1.0                                      # 关键帧间隔
+    kf_angle_deg: 15.0                                    # 关键帧角度
+    num_kfs_in_local_map: 30                              # 局部地图中的关键帧数
+    
+    
+    # ICP
+    max_iteration: 5                                      # ICP最大迭代次数
+    use_edge_points: true                                 # 是否使用角点
+    use_surf_points: true                                 # 是否使面角
+    max_line_distance: 0.5                                # 最近邻查找阈值点-线
+    max_plane_distance: 0.05                              # 最近邻查找阈值点-面
+    min_effective_pts: 10                                 # 最近邻查找阈值
+    eps: 1e-3                                             # 邻点数阈值
+
+
+    # 点云
+    min_filter_size_surf: 0.5                             # 降采样的尺寸
