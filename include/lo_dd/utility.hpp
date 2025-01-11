@@ -1,7 +1,7 @@
 /*
  * @Author: DMU zhangxianglong
  * @Date: 2024-11-18 11:41:09
- * @LastEditTime: 2025-01-10 10:33:45
+ * @LastEditTime: 2025-01-12 01:08:17
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
  * @FilePath: /LO-DD/include/lo_dd/utility.hpp
  * @Description: 
@@ -98,10 +98,15 @@ Mat3d Identity3d(Mat3d::Identity());
 Mat3f Identity3f(Mat3f::Identity());
 
 
+
 // 定义常用点云类型
 using PointType = pcl::PointXYZINormal;
 using PointCloudType = pcl::PointCloud<PointType>; 
 using PointVector = std::vector<PointType, Eigen::aligned_allocator<PointType>>;
+
+
+#define NUM_MATCH_POINTS    (5) 
+#define SKEW_SYM_MATRX(v)        0.0,-v[2],v[1],v[2],0.0,-v[0],-v[1],v[0],0.0
 
 
 using namespace std;
@@ -291,6 +296,8 @@ void publishPath(nav_msgs::msg::Path path, rclcpp::Publisher<nav_msgs::msg::Path
     thisPub->publish(path);
 }
 
+
+
 /**
  * @brief 发布点云
  * 
@@ -462,7 +469,7 @@ inline double calcDistanceSquared(const PointType &p1, const PointType &p2) {
 inline float Dis2(const Eigen::Vector3f &p1, const Eigen::Vector3f &p2) { return (p1 - p2).squaredNorm(); }
 
 /**
- * @brief 拟合直线
+ * @brief 拟合直线, SAD
  * 
  * @tparam S 
  * @param data 
@@ -500,7 +507,7 @@ bool fitLine(std::vector<Eigen::Matrix<S, 3, 1>>& data, Eigen::Matrix<S, 3, 1>& 
 }
 
 /**
- * @brief 拟合平面
+ * @brief 拟合平面, SAD
  * 
  * @tparam S 
  * @param data 
@@ -552,7 +559,51 @@ inline PointCloudType::Ptr voxelCloud(PointCloudType::Ptr cloud, float voxel_siz
     return output;
 }
 
+template<typename T>
+/**
+ * @brief 你和平面
+ * 
+ * @param pca_result 
+ * @param point 
+ * @param threshold 
+ * @return true 
+ * @return false 
+ */
+bool esti_plane(Eigen::Matrix<T, 4, 1> &pca_result, const PointVector &point, const T &threshold)
+{
+    Eigen::Matrix<T, NUM_MATCH_POINTS, 3> A;
+    Eigen::Matrix<T, NUM_MATCH_POINTS, 1> b;
+    A.setZero();
+    b.setOnes();
+    b *= -1.0f;
 
+    //求A/Dx + B/Dy + C/Dz + 1 = 0 的参数 
+    for (int j = 0; j < NUM_MATCH_POINTS; j++)
+    {
+        A(j,0) = point[j].x;
+        A(j,1) = point[j].y;
+        A(j,2) = point[j].z;
+    }
+
+    Eigen::Matrix<T, 3, 1> normvec = A.colPivHouseholderQr().solve(b);
+
+    T n = normvec.norm();
+    //pca_result是平面方程的4个参数  /n是为了归一化
+    pca_result(0) = normvec(0) / n;
+    pca_result(1) = normvec(1) / n;
+    pca_result(2) = normvec(2) / n;
+    pca_result(3) = 1.0 / n;
+
+    //如果几个点中有距离该平面>threshold的点 认为是不好的平面 返回false
+    for (int j = 0; j < NUM_MATCH_POINTS; j++)
+    {
+        if (fabs(pca_result(0) * point[j].x + pca_result(1) * point[j].y + pca_result(2) * point[j].z + pca_result(3)) > threshold)
+        {
+            return false;
+        }
+    }
+    return true;
+}
 
 
 rmw_qos_profile_t qos_profile{

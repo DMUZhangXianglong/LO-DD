@@ -2,7 +2,7 @@
  * @Author: DMUZhangXianglong 347913076@qq.com
  * @Date: 2024-12-15 12:42:30
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
- * @LastEditTime: 2025-01-10 15:53:17
+ * @LastEditTime: 2025-01-12 01:22:49
  * @FilePath: /LO-DD/include/lo_dd/eskfom.hpp
  * @Description: 
  */
@@ -43,6 +43,116 @@ namespace esekfom{
             eskf(){}
             ~eskf(){}
 
+
+            // 观测方程
+            void h_shaer_model(dynamic_share_data &ekfom_data, PointCloudType::Ptr &features_dsf_body, KD_TREE<PointType> &ikdtree, vector<PointVector> &nearest_points, bool extrinsic_est)    
+            {
+                int features_dsf_size = features_dsf_body->points.size();
+                laserCloudOri->clear();
+                corr_normvect->clear();
+                
+                // 参考高翔的代码需要修改一下
+                #ifdef MP_EN
+                   omp_set_num_threads(MP_PROC_NUM);
+                    #pragma omp parallel for
+                #endif
+                for(int i = 0; i < features_dsf_size; i++)
+                {   
+
+                    PointType &point_body = features_dsf_body->points[i];
+                    PointType point_world;
+                    Vec3d p_body(point_body.x, point_body.y, point_body.z);
+                    Vec3d p_world(x_.rotation_matrix * (x_.offset_R_L_I * p_body + x_.offset_T_L_I) + x_.position);
+                    point_world.x = p_world(0);
+                    point_world.y = p_world(1);
+                    point_world.z = p_world(2);
+                    point_world.intensity = point_body.intensity;
+
+                    // 点搜索距离
+                    vector<float> pointSearchSqDis(NUM_MATCH_POINTS);
+                    auto &points_near = nearest_points[i]; // Nearest_Points[i]打印出来发现是按照离point_world距离，从小到大的顺序的vector
+
+                    // 如果迭代滤波器收敛了
+                    if (ekfom_data.converge) 
+                    {
+                        // point_world是被查找的点， point_world找点的个数，point_world找到的最近点，pointSearchSqDis最近点到点的距离
+                        ikdtree.Nearest_Search(point_world, NUM_MATCH_POINTS, points_near, pointSearchSqDis);
+                        // 筛选点是否为有效点
+                        if (points_near.size() < NUM_MATCH_POINTS) {
+                            point_selected_surf[i] = false;  // 最近点数量不足
+                        } else if (pointSearchSqDis[NUM_MATCH_POINTS - 1] > 5) {
+                            point_selected_surf[i] = false;  // 最近点的距离过大
+                        } else {
+                            point_selected_surf[i] = true;   // 满足所有条件
+                        }
+                    }
+                    // 如果该点无效，那么结束本次for循环
+                    if (!point_selected_surf[i])
+                    {
+                        continue;
+                    }
+                    
+                    Eigen::Matrix<float, 4, 1> plane_abcd; // 平面点    
+                    point_selected_surf[i] = false; 
+
+                    // 平面拟合ax+by+cz+d=0, 实际上points_near就是地图中与point_world最近的点用来你和平面
+                    if (esti_plane(plane_abcd, points_near, 0.1f)) 
+                    {
+                        float point2plane_dis = plane_abcd(0) * point_world.x + plane_abcd(1) * point_world.y + plane_abcd(2) * point_world.z + plane_abcd(3);
+                        
+                        //如果残差大于经验阈值，则认为该点是有效点  简言之，距离原点越近的lidar点  要求点到平面的距离越苛刻
+                        float s = 1 - 0.9 * fabs(point2plane_dis) / sqrt(p_body.norm()); // 这是一个经验公式了
+                        if (s > 0.9) 
+                        {   
+                            // 储蓄有效点到平面的距离以及该平面的法向量
+                            point_selected_surf[i] = true;
+                            normvec->points[i].x = plane_abcd(0);
+                            normvec->points[i].y = plane_abcd(1);
+                            normvec->points[i].z = plane_abcd(2);
+                            normvec->points[i].intensity = point2plane_dis;
+                        }
+                    }   
+                }
+
+                int effct_feat_num = 0;
+                for (int i = 0; i < features_dsf_size; i++)
+                {
+                    if (point_selected_surf[i] == true)
+                    {
+                        // 保存有效特征点和其对应的平面法向量
+                        laserCloudOri->points[effct_feat_num] = features_dsf_body->points[i];
+                        corr_normvect->points[effct_feat_num] = normvec->points[i];
+                        effct_feat_num++;
+                    }
+                }
+
+                if (effct_feat_num < 1)
+                {
+                    ekfom_data.valid = false;
+                    RCLCPP_WARN_STREAM(rclcpp::get_logger("ESKFOM"), "No Effective Points!");
+                    return;
+                }
+
+                // 计算雅可比和残差
+                ekfom_data.h_x = Eigen::MatrixXd::Zero(effct_feat_num, 12); 
+                ekfom_data.h.resize(effct_feat_num);
+                for (int i = 0; i < effct_feat_num; i++)
+                {
+                    Vec3d point_temp(laserCloudOri->points[i].x, laserCloudOri->points[i].y, laserCloudOri->points[i].z);
+                    // point_temp 的反对称矩阵形式
+                    Mat3d point_crossmat;
+                    point_temp << SKEW_SYM_MATRX(point_temp);
+                    
+                    // 2025年1月12日01:22:47
+                    
+                }
+                
+
+
+
+            }
+
+
             // 滤波器更新
             /**
              * @brief 滤波器更新
@@ -54,7 +164,7 @@ namespace esekfom{
              * @param max_iter          最大迭代次数
              * @param extrinsic_est     是够估计外参
              */
-            void eskfUpdate(double R, PointCloudType::Ptr &features_dsf_body, KD_TREE<PointType> &ikdtree, vector<PointVector> &Nearest_Points, int max_iter, bool extrinsic_est)
+            void eskfUpdate(double R, PointCloudType::Ptr &features_dsf_body, KD_TREE<PointType> &ikdtree, vector<PointVector> &nearest_points, int max_iter, bool extrinsic_est)
             {
                 normvec->resize(int(features_dsf_body->points.size()));
                 

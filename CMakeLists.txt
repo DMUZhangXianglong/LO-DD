@@ -141,7 +141,7 @@ ament_export_dependencies(rosidl_default_runtime)
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 # 定义可执行文件: odometry
-add_executable(${PROJECT_NAME}_odometry src/odometry.cpp src/imuProcess.hpp)
+add_executable(${PROJECT_NAME}_odometry src/odometry.cpp src/imuProcess.hpp include/ikd-Tree/ikd_Tree.cpp)
 ament_target_dependencies(${PROJECT_NAME}_odometry rclcpp rclpy sensor_msgs std_msgs PCL pcl_conversions geometry_msgs nav_msgs tf2 tf2_ros visualization_msgs)
 target_link_libraries(${PROJECT_NAME}_odometry "${cpp_typesupport_target}")
 
