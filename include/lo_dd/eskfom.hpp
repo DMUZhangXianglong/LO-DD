@@ -2,7 +2,7 @@
  * @Author: DMUZhangXianglong 347913076@qq.com
  * @Date: 2024-12-15 12:42:30
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
- * @LastEditTime: 2024-12-21 02:38:01
+ * @LastEditTime: 2025-01-10 15:53:17
  * @FilePath: /LO-DD/include/lo_dd/eskfom.hpp
  * @Description: 
  */
@@ -10,11 +10,26 @@
 
 #include "IKFoM.hpp"
 #include "utility.hpp"
+#include "ikd_Tree.h"
 
 using covariance_matrix = Eigen::Matrix<double, 24, 24>;
 using state_vector = Eigen::Matrix<double, 24, 1>;
 
 namespace esekfom{
+    PointCloudType::Ptr normvec(new PointCloudType(100000, 1));		  //特征点在地图中对应的平面参数(平面的单位法向量,以及当前点到平面距离)
+    PointCloudType::Ptr laserCloudOri(new PointCloudType(100000, 1)); //有效特征点
+    PointCloudType::Ptr corr_normvect(new PointCloudType(100000, 1)); //有效特征点对应点法相量
+    bool point_selected_surf[100000] = {1};							  //判断是否是有效特征点(c++ 1表示true 0表示false)
+
+
+
+    struct  dynamic_share_data
+    {
+        bool valid;                                                // 有效特征点数是否满足需求
+        bool converge;                                             // 迭代时是否收敛
+        Eigen::Matrix<double, Eigen::Dynamic, 1> h;	               // 残差 (公式(14)中的z)
+        Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> h_x; //雅可比矩阵H (公式(14)中的H)
+    };
     
 
 
@@ -27,6 +42,47 @@ namespace esekfom{
         public:
             eskf(){}
             ~eskf(){}
+
+            // 滤波器更新
+            /**
+             * @brief 滤波器更新
+             * 
+             * @param R 
+             * @param features_dsf_body lidar坐标系下的降采样后的点
+             * @param ikdtree           ikdtree对象
+             * @param Nearest_Points    最近邻点
+             * @param max_iter          最大迭代次数
+             * @param extrinsic_est     是够估计外参
+             */
+            void eskfUpdate(double R, PointCloudType::Ptr &features_dsf_body, KD_TREE<PointType> &ikdtree, vector<PointVector> &Nearest_Points, int max_iter, bool extrinsic_est)
+            {
+                normvec->resize(int(features_dsf_body->points.size()));
+                
+                dynamic_share_data dyna_share;
+                dyna_share.valid = true;
+                dyna_share.converge = true;
+                int t = 0;
+
+                // 前向传播得到状态和协方差矩阵
+                state_ikfom x_propagated = x_;
+                covariance_matrix P_propagated = P_;
+
+                // 24 x 1 的状态向量
+                state_vector delta_x_new = state_vector::Zero();
+
+                // 误差状态迭代
+                for (int i = -1; i < max_iter; i++)
+                {
+                    dyna_share.valid = true;
+
+                    // 计算观测方程里的雅可比
+                    
+                }
+                 
+
+
+            }
+
 
             state_ikfom getState()
             {
@@ -121,4 +177,5 @@ namespace esekfom{
             
     };
 }
+
 

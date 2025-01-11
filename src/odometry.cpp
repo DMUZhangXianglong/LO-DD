@@ -1,7 +1,7 @@
 /*
  * @Author: DMU zhangxianglong
  * @Date: 2024-11-18 11:34:52
- * @LastEditTime: 2025-01-08 23:50:08
+ * @LastEditTime: 2025-01-10 15:16:04
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
  * @FilePath: /LO-DD/src/lidarOdometry.cpp
  * @Description: 实现激光里程计
@@ -80,8 +80,9 @@ public:
     vector<BoxPointType> cube_need_remove;
     vector<PointVector> nearest_points;
     int kdtree_delete_counter, add_point_size;
-    // KD_TREE(PointType) ikdtree;
     KD_TREE<PointType> ikdtree;
+
+
     
     // 全局地图
     PointCloudType::Ptr globalMap;
@@ -211,6 +212,26 @@ public:
     }
     
     /**
+     * @brief 从雷达坐标系转换到世界坐标下
+     * 
+     * @param p_in 
+     * @param p_out 
+     */
+    void pointBody2World(PointType const *const p_in, PointType *const p_out)
+    {   
+        // lidar坐标系下的点
+        Vec3d p_body(p_in->x, p_in->y, p_in->z);
+        // world坐标系下的点
+        Vec3d p_world(state_now.rotation_matrix.matrix() * (state_now.offset_R_L_I.matrix() * p_body + state_now.offset_T_L_I) + state_now.position);
+
+        p_out->x = p_world(0);
+        p_out->y = p_world(1);
+        p_out->z = p_world(2);
+        p_out->intensity = p_in->intensity;
+    }
+
+
+    /**
      * @brief 
      * 
      */
@@ -253,7 +274,7 @@ public:
             // 未实现
             segmentLaserMap();
 
-            // 去畸变后的点云降采样, 得到降采样后的点云
+            // 去畸变后的点云降采样, 得到降采样后的点云 feature_dsf_body body坐标系下
             downSizeFilterSurf.setInputCloud(feature_undistort);
             downSizeFilterSurf.filter(*feature_dsf_body);
             feature_dsf_size = feature_dsf_body->size();
@@ -265,18 +286,40 @@ public:
                 return; 
             }
 
-            // 初始化ikdtree
+            // 初始化ikdtree（ikdtree为空时）
             if (ikdtree.Root_Node == nullptr)
-            {
-                
+            {   
+                // 设置降采样参数
+                ikdtree.set_downsample_param(min_filter_size_map);
+                feature_dsf_world->resize(feature_dsf_size);
+                // lidar坐标系转到世界坐标系
+                for (int i = 0; i < feature_dsf_size; i++)
+                {
+                    pointBody2World(&(feature_dsf_body->points[i]), &(feature_dsf_world->points[i]));
+                }
+                // 构建ikdtree
+                ikdtree.Build(feature_dsf_world->points);
+                return;
             }
+
+            // int featuresFromMapNum = ikdtree.validnum();
+            
+
+            /*    迭代状态估计   */ 
+            nearest_points.resize(feature_dsf_size); // 存放最近邻的点
+            
+            /*    迭代状态估计   */ 
+            
             
             
         }
         
     }
 
-
+    /**
+     * @brief 分割地图
+     * 
+     */
     void segmentLaserMap()
     {
         cube_need_remove.clear();

@@ -1,7 +1,7 @@
 /*
  * @Author: DMU zhangxianglong
  * @Date: 2024-11-18 11:41:09
- * @LastEditTime: 2024-12-21 02:37:21
+ * @LastEditTime: 2025-01-10 10:33:45
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
  * @FilePath: /LO-DD/include/lo_dd/utility.hpp
  * @Description: 
@@ -69,6 +69,8 @@
 
 // 自定义消息
 #include "lo_dd/msg/pose6_d.hpp"
+
+
 
 
 #define VEC_FROM_ARRAY(v)        v[0],v[1],v[2]
@@ -149,6 +151,7 @@ public:
     int num_kfs_in_local_map;
     std::string sensorStr;
     double min_filter_size_surf;
+    double min_filter_size_map;
 
     SensorType sensor = SensorType::VELODYNE;
     
@@ -210,6 +213,11 @@ public:
 
         declare_parameter("min_filter_size_surf", 0.5);
         get_parameter("min_filter_size_surf", min_filter_size_surf);  
+
+
+        declare_parameter("min_filter_size_map", 0.5);
+        get_parameter("min_filter_size_map", min_filter_size_map); 
+
         if (sensorStr == "velodyne")
         {
             sensor = SensorType::VELODYNE;
@@ -231,6 +239,7 @@ public:
 
 
     }
+    
 
     /**
      * @brief 计算耗时
@@ -605,3 +614,4 @@ auto qos_imu = rclcpp::QoS(
         qos_profile_imu.depth
     ),
     qos_profile_imu);
+

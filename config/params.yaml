@@ -44,3 +44,7 @@
 
     # 点云
     min_filter_size_surf: 0.5                             # 降采样的尺寸
+
+
+    # ikdtree
+    min_filter_size_map: 0.5                              # 地图的降采样尺寸
