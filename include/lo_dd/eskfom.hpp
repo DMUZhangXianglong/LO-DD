@@ -2,7 +2,7 @@
  * @Author: DMUZhangXianglong 347913076@qq.com
  * @Date: 2024-12-15 12:42:30
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
- * @LastEditTime: 2025-01-12 01:22:49
+ * @LastEditTime: 2025-01-18 03:56:16
  * @FilePath: /LO-DD/include/lo_dd/eskfom.hpp
  * @Description: 
  */
@@ -18,7 +18,7 @@ using state_vector = Eigen::Matrix<double, 24, 1>;
 namespace esekfom{
     PointCloudType::Ptr normvec(new PointCloudType(100000, 1));		  //特征点在地图中对应的平面参数(平面的单位法向量,以及当前点到平面距离)
     PointCloudType::Ptr laserCloudOri(new PointCloudType(100000, 1)); //有效特征点
-    PointCloudType::Ptr corr_normvect(new PointCloudType(100000, 1)); //有效特征点对应点法相量
+    PointCloudType::Ptr corr_normvector(new PointCloudType(100000, 1)); //有效特征点对应点法相量
     bool point_selected_surf[100000] = {1};							  //判断是否是有效特征点(c++ 1表示true 0表示false)
 
 
@@ -45,13 +45,23 @@ namespace esekfom{
 
 
             // 观测方程
-            void h_shaer_model(dynamic_share_data &ekfom_data, PointCloudType::Ptr &features_dsf_body, KD_TREE<PointType> &ikdtree, vector<PointVector> &nearest_points, bool extrinsic_est)    
+            /**
+             * @brief 计算观测方程的雅可比和残差
+             * 
+             * @param ekfom_data        观测方程的数据，主要包含是否收敛 残差 雅可比 特征点是否有效
+             * @param features_dsf_body lidar坐标系下的下采样后的点
+             * @param ikdtree           ikdtree    
+             * @param nearest_points    最近邻的点
+             * @param extrinsic_est     是否需要估计外参    
+             * @return * void 
+             */
+            void h_share_model(dynamic_share_data &ekfom_data, PointCloudType::Ptr &features_dsf_body, KD_TREE<PointType> &ikdtree, vector<PointVector> &nearest_points, bool extrinsic_est)    
             {
                 int features_dsf_size = features_dsf_body->points.size();
                 laserCloudOri->clear();
-                corr_normvect->clear();
+                corr_normvector->clear();
                 
-                // 参考高翔的代码需要修改一下
+                // 此处需要参考高翔的代码需要修改一下
                 #ifdef MP_EN
                    omp_set_num_threads(MP_PROC_NUM);
                     #pragma omp parallel for
@@ -121,7 +131,7 @@ namespace esekfom{
                     {
                         // 保存有效特征点和其对应的平面法向量
                         laserCloudOri->points[effct_feat_num] = features_dsf_body->points[i];
-                        corr_normvect->points[effct_feat_num] = normvec->points[i];
+                        corr_normvector->points[effct_feat_num] = normvec->points[i];
                         effct_feat_num++;
                     }
                 }
@@ -138,18 +148,38 @@ namespace esekfom{
                 ekfom_data.h.resize(effct_feat_num);
                 for (int i = 0; i < effct_feat_num; i++)
                 {
-                    Vec3d point_temp(laserCloudOri->points[i].x, laserCloudOri->points[i].y, laserCloudOri->points[i].z);
-                    // point_temp 的反对称矩阵形式
-                    Mat3d point_crossmat;
-                    point_temp << SKEW_SYM_MATRX(point_temp);
+                    Vec3d point_lidar(laserCloudOri->points[i].x, laserCloudOri->points[i].y, laserCloudOri->points[i].z);
+                    // point_lidar 的反对称矩阵形式
+                    Mat3d point_lidar_crossmat;
+                    point_lidar_crossmat << SKEW_SYM_MATRX(point_lidar);
                     
-                    // 2025年1月12日01:22:47
-                    
+                    // imu坐标系下的点
+                    Vec3d point_imu = x_.offset_R_L_I * point_lidar + x_.offset_T_L_I;
+                    // 其反对称矩阵形式
+                    Mat3d point_imu_crossmat;
+                    point_imu_crossmat << SKEW_SYM_MATRX(point_imu);
+
+                    // 第i个点对应的平面法向量
+                    const PointType &norm_p = corr_normvector->points[i];
+                    Vec3d norm_p_vec(norm_p.x, norm_p.y, norm_p.z);
+
+                    // 计算雅可比矩阵H, 公式中的法向量应该是 1x3 的
+                    Vec3d C(x_.rotation_matrix.matrix().transpose() * norm_p_vec);
+                    Vec3d A(point_imu_crossmat * C);
+                    // 如果需要估计外参
+                    if(extrinsic_est)
+                    {
+                        Vec3d B(point_lidar_crossmat * x_.offset_R_L_I.matrix().transpose() * C);
+                        ekfom_data.h_x.block<1, 12>(i, 0) << norm_p.x, norm_p.y, norm_p.z, VEC_FROM_ARRAY(A), VEC_FROM_ARRAY(B), VEC_FROM_ARRAY(C);
+                    }
+                    else
+                    {
+                        ekfom_data.h_x.block<1, 12>(i, 0) << norm_p.x, norm_p.y, norm_p.z, VEC_FROM_ARRAY(A), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
+                    }
+
+                    // 残差
+                    ekfom_data.h(i) = -norm_p.intensity; 
                 }
-                
-
-
-
             }
 
 
@@ -160,7 +190,7 @@ namespace esekfom{
              * @param R 
              * @param features_dsf_body lidar坐标系下的降采样后的点
              * @param ikdtree           ikdtree对象
-             * @param Nearest_Points    最近邻点
+             * @param nearest_points    最近邻点
              * @param max_iter          最大迭代次数
              * @param extrinsic_est     是够估计外参
              */
@@ -173,22 +203,56 @@ namespace esekfom{
                 dyna_share.converge = true;
                 int t = 0;
 
-                // 前向传播得到状态和协方差矩阵
+                // 前向传播得到状态和协方差矩阵，x_ 是预测得到的状态
                 state_ikfom x_propagated = x_;
                 covariance_matrix P_propagated = P_;
 
                 // 24 x 1 的状态向量
                 state_vector delta_x_new = state_vector::Zero();
 
-                // 误差状态迭代
+                // 误差状态迭代，max_iter 是卡尔曼滤波的最大迭代次数
                 for (int i = -1; i < max_iter; i++)
                 {
+                    // 特征点数满足要求
                     dyna_share.valid = true;
 
                     // 计算观测方程里的雅可比
+                    h_share_model(dyna_share, features_dsf_body, ikdtree, nearest_points, extrinsic_est);
+
+                    // 如果这次点里有无效的点，那么这次迭代就跳过
+                    if (!dyna_share.valid)
+                    {
+                        continue;
+                    }
+
+                    // 计算更新的增量
+                    state_vector delta_x;
+                    delta_x_new = boxminus(x_, x_propagated); // 公式(18)中的 x^k - x^， 第k次迭代的误差状态
+
+                    // 最后的 H 矩阵是 m x 24 的矩阵， 其中 m 是特征点的个数，但是只有前12列不为0
+                    Eigen::Matrix<double, Eigen::Dynamic, 24> H;
+                    int rows = dyna_share.h_x.rows();
+                    H = Eigen::MatrixXd::Zero(rows, 24);
+                    H.block(0, 0, rows, 12) = dyna_share.h_x;
+
+                    auto H_block = dyna_share.h_x; // m x 12 的矩阵， 非 0 部分
+                    Eigen::Matrix<double, 24, 24> HTH = Eigen::Matrix<double, 24, 24>::Zero(); // H^T 乘 H 24 x 24 的矩阵
+                    HTH.block<12, 12>(0, 0) = H_block.transpose() * H_block; // 把非0块放进去
+                    
+                    // 计算卡尔曼增益 K
+                    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> K;
+                    auto K_1 = ((HTH / R) + P_.inverse()).inverse(); 
+                    auto K_2 = H.transpose() / R; 
+                    K = K_1 * K_2;
+
+                    // 2025年1月18日03:56:32
+                    
+
                     
                 }
-                 
+                
+
+                                                                                                       
 
 
             }

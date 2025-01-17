@@ -1,7 +1,7 @@
 /*
  * @Author: DMU zhangxianglong
  * @Date: 2024-11-18 11:41:09
- * @LastEditTime: 2025-01-12 01:08:17
+ * @LastEditTime: 2025-01-12 10:17:23
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
  * @FilePath: /LO-DD/include/lo_dd/utility.hpp
  * @Description: 
@@ -75,6 +75,8 @@
 
 #define VEC_FROM_ARRAY(v)        v[0],v[1],v[2]
 #define MAT_FROM_ARRAY(v)        v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7],v[8]
+#define NUM_MATCH_POINTS         (5) 
+#define SKEW_SYM_MATRX(v)        0.0,-v[2],v[1],v[2],0.0,-v[0],-v[1],v[0],0.0
 
 
 
@@ -105,8 +107,7 @@ using PointCloudType = pcl::PointCloud<PointType>;
 using PointVector = std::vector<PointType, Eigen::aligned_allocator<PointType>>;
 
 
-#define NUM_MATCH_POINTS    (5) 
-#define SKEW_SYM_MATRX(v)        0.0,-v[2],v[1],v[2],0.0,-v[0],-v[1],v[0],0.0
+
 
 
 using namespace std;
