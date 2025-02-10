@@ -1,7 +1,7 @@
 /*
  * @Author: DMU zhangxianglong
  * @Date: 2024-11-18 11:41:09
- * @LastEditTime: 2025-01-12 10:17:23
+ * @LastEditTime: 2025-02-10 10:23:42
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
  * @FilePath: /LO-DD/include/lo_dd/utility.hpp
  * @Description: 
@@ -114,7 +114,7 @@ using namespace std;
 // 常量定义
 constexpr double kDEG2RAD = M_PI / 180.0;  // deg->rad
 constexpr double kRAD2DEG = 180.0 / M_PI;  // rad -> deg
-constexpr double G_m_s2 = 9.81;  // rad -> deg
+constexpr double G_m_s2 = 9.81;  // 重力加速度
 
 enum class SensorType {VELODYNE, ROBOSENSE, OUSTER};
 
@@ -138,31 +138,43 @@ struct Measurements
 class ParamServer : public rclcpp::Node
 {
 public:
-    string pointCloudTopic;
-    string imuTopic;
-    string lidarFrame;
-    string mapFrame;
-    int num_scans;
-    int min_edge_pts;
-    int min_surf_pts;
-    int max_iteration;
-    bool use_edge_points;
-    bool use_surf_points;
-    double max_line_distance;
-    double max_plane_distance;
-    int min_effective_pts;
-    double eps;
-    double kf_distance;
-    double kf_angle_deg;
-    int num_kfs_in_local_map;
-    std::string sensorStr;
-    double min_filter_size_surf;
-    double min_filter_size_map;
+    // 字符串变量
+    std::string pointCloudTopic;  // 点云话题名称
+    std::string imuTopic;         // IMU话题名称
+    std::string lidarFrame;       // 激光雷达坐标系
+    std::string mapFrame;         // 地图坐标系
+    std::string sensorStr;        // 传感器类型字符串
+
+    // 整型变量
+    int num_scans;                // 扫描次数
+    int min_edge_pts;             // 最小边缘点数
+    int min_surf_pts;             // 最小表面点数
+    int max_iteration;            // 最大迭代次数
+    int min_effective_pts;        // 最小有效点数
+    int num_kfs_in_local_map;     // 本地地图中的关键帧数量
+    int kf_max_iteration;         // 卡尔曼滤波器最大迭代次数
+
+    // 布尔变量
+    bool use_edge_points;         // 是否使用边缘点
+    bool use_surf_points;         // 是否使用表面点
+    bool extrinsic_estamiton_en;  // 是否启用外参估计
+    
+    // 双精度浮点型变量
+    double max_line_distance;     // 最大线距离
+    double max_plane_distance;    // 最大平面距离
+    double eps;                   // 小数精度
+    double kf_distance;           // 关键帧距离阈值
+    double kf_angle_deg;          // 关键帧角度阈值（度）
+    double min_filter_size_surf;  // 表面过滤最小尺寸
+    double min_filter_size_map;   // 地图过滤最小尺寸
+
+
 
     SensorType sensor = SensorType::VELODYNE;
     
     ParamServer(std::string node_name, const rclcpp::NodeOptions & options) : Node(node_name, options)
     {
+        // 字符串变量
         declare_parameter("pointCloudTopic", "points");
         get_parameter("pointCloudTopic", pointCloudTopic);
 
@@ -172,6 +184,13 @@ public:
         declare_parameter("lidarFrame", "lidarFrame");
         get_parameter("lidarFrame", lidarFrame);
 
+        declare_parameter("mapFrame", "map");
+        get_parameter("mapFrame", mapFrame);
+
+        declare_parameter("sensor", "velodyne");
+        get_parameter("sensor", sensorStr);
+
+        // 整型变量
         declare_parameter("num_scans", 16);
         get_parameter("num_scans", num_scans);
 
@@ -184,45 +203,49 @@ public:
         declare_parameter("max_iteration", 5);
         get_parameter("max_iteration", max_iteration);
 
+        declare_parameter("min_effective_pts", 10);
+        get_parameter("min_effective_pts", min_effective_pts);
+
+        declare_parameter("num_kfs_in_local_map", 30);
+        get_parameter("num_kfs_in_local_map", num_kfs_in_local_map);
+
+        declare_parameter("kf_max_iteration", 5);
+        get_parameter("kf_max_iteration", kf_max_iteration);
+
+        // 布尔变量
         declare_parameter("use_edge_points", true);
         get_parameter("use_edge_points", use_edge_points);
 
         declare_parameter("use_surf_points", true);
         get_parameter("use_surf_points", use_surf_points);
 
+        declare_parameter("extrinsic_estamiton_en", false);
+        get_parameter("extrinsic_estamiton_en", extrinsic_estamiton_en);
+
+        // 双精度浮点型变量
         declare_parameter("max_line_distance", 0.5);
         get_parameter("max_line_distance", max_line_distance);
 
         declare_parameter("max_plane_distance", 0.05);
         get_parameter("max_plane_distance", max_plane_distance);
 
-        declare_parameter("min_effective_pts", 10);
-        get_parameter("min_effective_pts", min_effective_pts);   
-
         declare_parameter("eps", 1e-3);
-        get_parameter("eps", eps);  
-        
+        get_parameter("eps", eps);
+
         declare_parameter("kf_distance", 1.0);
-        get_parameter("kf_distance", kf_distance);  
+        get_parameter("kf_distance", kf_distance);
 
         declare_parameter("kf_angle_deg", 15.0);
-        get_parameter("kf_angle_deg", kf_angle_deg);  
-
-        declare_parameter("num_kfs_in_local_map", 30);
-        get_parameter("num_kfs_in_local_map", num_kfs_in_local_map);  
-
-        declare_parameter("mapFrame", "map");
-        get_parameter("mapFrame", mapFrame);  
-
-        declare_parameter("sensor", "velodyne");
-        get_parameter("sensor", sensorStr);
+        get_parameter("kf_angle_deg", kf_angle_deg);
 
         declare_parameter("min_filter_size_surf", 0.5);
-        get_parameter("min_filter_size_surf", min_filter_size_surf);  
-
+        get_parameter("min_filter_size_surf", min_filter_size_surf);
 
         declare_parameter("min_filter_size_map", 0.5);
-        get_parameter("min_filter_size_map", min_filter_size_map); 
+        get_parameter("min_filter_size_map", min_filter_size_map);
+
+
+        
 
         if (sensorStr == "velodyne")
         {

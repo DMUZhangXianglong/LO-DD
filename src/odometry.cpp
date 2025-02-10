@@ -1,7 +1,7 @@
 /*
  * @Author: DMU zhangxianglong
  * @Date: 2024-11-18 11:34:52
- * @LastEditTime: 2025-01-12 00:14:44
+ * @LastEditTime: 2025-02-09 19:04:29
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
  * @FilePath: /LO-DD/src/lidarOdometry.cpp
  * @Description: 实现激光里程计
@@ -17,6 +17,7 @@
 #include "ikd_Tree.h"
 
 #define INIT_TIME (0.1)
+#define LIDAR_POINT_COV (0.001) // 雷达点的协方差
 
 class Odometry : public ParamServer
 {
@@ -68,7 +69,7 @@ public:
     // imuprocess 对象
     std::shared_ptr<ImuProcess> imu_process;
     esekfom::eskf kf;       // 误差状态卡尔曼滤波器
-    state_ikfom state_now;  // 状态
+    state_ikfom state_now;  // 当前状态
     Vec3d LiDAR_position_w; // LiDAR在世界坐标系下的位置
     bool ekf_is_inited; 
     pcl::VoxelGrid<PointType> downSizeFilterSurf; // 降采样器
@@ -255,7 +256,8 @@ public:
                 RCLCPP_WARN_STREAM(this->get_logger(), "The feature_undistort is empty skip this scan.");
                 return;
             }
-
+            
+            // 当前状态(未更新)
             state_now = kf.getState();
             // 计算lidar在世界坐标系下的位置
             // 将 LiDAR 在局部坐标系中的偏移量（offset_T_L_I）通过旋转矩阵转换到世界坐标系下。
@@ -307,8 +309,23 @@ public:
 
             /*    迭代状态估计   */ 
             nearest_points.resize(feature_dsf_size); // 存放最近邻的点
-            
+            kf.eskfUpdate(
+                LIDAR_POINT_COV,          // 激光雷达点云的协方差
+                feature_dsf_body,         // 去畸变降采样后雷达坐标系下的特征点
+                ikdtree,                  // k-d树用于快速最近邻搜索
+                nearest_points,           // 存储最近邻点的容器
+                kf_max_iteration,         // 滤波器最大迭代次数
+                extrinsic_estamiton_en    // 是否启用外参估计
+            );
+            // 当前状态（更新后）
+            state_now = kf.getState();
+            // 雷达在世界坐标系下的位置
+            LiDAR_position_w = state_now.position + state_now.rotation_matrix.matrix() * state_now.offset_T_L_I;
             /*    迭代状态估计   */ 
+
+
+            // 发布里程计
+            // 
             
             
             

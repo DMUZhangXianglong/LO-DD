@@ -2,7 +2,7 @@
  * @Author: DMUZhangXianglong 347913076@qq.com
  * @Date: 2024-12-15 12:42:30
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
- * @LastEditTime: 2025-01-18 03:56:16
+ * @LastEditTime: 2025-02-09 18:26:07
  * @FilePath: /LO-DD/include/lo_dd/eskfom.hpp
  * @Description: 
  */
@@ -12,6 +12,7 @@
 #include "utility.hpp"
 #include "ikd_Tree.h"
 
+const double epsi = 0.001; // ESKF迭代时，如果dx<epsi 认为收敛
 using covariance_matrix = Eigen::Matrix<double, 24, 24>;
 using state_vector = Eigen::Matrix<double, 24, 1>;
 
@@ -120,6 +121,7 @@ namespace esekfom{
                             normvec->points[i].y = plane_abcd(1);
                             normvec->points[i].z = plane_abcd(2);
                             normvec->points[i].intensity = point2plane_dis;
+                            
                         }
                     }   
                 }
@@ -181,7 +183,7 @@ namespace esekfom{
                     ekfom_data.h(i) = -norm_p.intensity; 
                 }
             }
-
+            
 
             // 滤波器更新
             /**
@@ -239,22 +241,56 @@ namespace esekfom{
                     Eigen::Matrix<double, 24, 24> HTH = Eigen::Matrix<double, 24, 24>::Zero(); // H^T 乘 H 24 x 24 的矩阵
                     HTH.block<12, 12>(0, 0) = H_block.transpose() * H_block; // 把非0块放进去
                     
-                    // 计算卡尔曼增益 K
+                    // 计算卡尔曼增益 K = PH^T(HP H^T + R)^(-1)
                     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> K;
                     auto K_1 = ((HTH / R) + P_.inverse()).inverse(); 
                     auto K_2 = H.transpose() / R; 
-                    K = K_1 * K_2;
-
-                    // 2025年1月18日03:56:32
+                    K = K_1 * K_2;  // 24 x m 的矩阵，即最后的卡尔曼滤波增益
                     
+                    // 公式18中的KH
+                    Eigen::Matrix<double, 24, 24> KH = Eigen::Matrix<double, 24, 24>::Zero();
+                    KH.block<24, 12>(0, 0) = K * H;
+                    
+                    // 公式18
+                    Eigen::Matrix<double, 24, 1> dx_ = K * dyna_share.h + (KH - Eigen::Matrix<double, 24, 24>::Identity()) * delta_x_new;
+                    // 更新状态 公式 18
+                    x_ = boxplus(x_, dx_);
 
+                    // 先设置为收敛
+                    dyna_share.converge = true;
+                    
+                    // 判断是否收敛
+                    for (int j = 0; j < 24; j++)
+                    {   
+                        // 如果大于这个值，设置为没收敛
+                        if (std::fabs(dx_[j]) > epsi)
+                        {
+                            dyna_share.converge = false;
+                            break; // 结束循环
+                        }
+                    }
+                    
+                    // 记录迭代过程中收敛了几次
+                    if (dyna_share.converge = true)
+                    {
+                        t++;
+                    }
+                    
+                    // 如果迭代了 3 次还没收敛，那么就置城true h_share_model中重新寻找近邻点
+                    if (!t && i == max_iter - 2)
+                    {
+                        dyna_share.converge = true;
+                    }
+                    
+                    if (t > 1 || i == max_iter - 1)
+                    {
+                        // 更新协方差矩阵
+                        P_ = (Eigen::Matrix<double, 24, 24>::Identity() - KH) * P_;
+                        return;
+                    }
                     
                 }
-                
-
-                                                                                                       
-
-
+                                                                                
             }
 
 

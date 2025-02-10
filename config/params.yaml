@@ -23,6 +23,9 @@
     # LiDAR参数
     num_scans: 16                                         # LiDAR线数
 
+    # 卡尔曼滤波器参数
+    kf_max_iteration: 5                                   # 最大迭代次数
+    extrinsic_estamiton_en: false                         # 是否估计外参
 
     # 
     min_edge_pts: 20                                      # 最小角点数
