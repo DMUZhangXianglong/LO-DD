@@ -1,7 +1,7 @@
 /*
  * @Author: DMU zhangxianglong
  * @Date: 2024-11-18 11:41:09
- * @LastEditTime: 2025-02-10 10:23:42
+ * @LastEditTime: 2025-02-18 12:29:26
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
  * @FilePath: /LO-DD/include/lo_dd/utility.hpp
  * @Description: 
@@ -118,17 +118,26 @@ constexpr double G_m_s2 = 9.81;  // 重力加速度
 
 enum class SensorType {VELODYNE, ROBOSENSE, OUSTER};
 
-// 当前需要处理的 IMU 和 LiDAR 数据
+/**
+ * @brief 
+ * 1 雷达 点云 起始 结束时间
+ * 2 imu  imu对象 包含imu测量
+ */
 struct Measurements     
-{
+{   
+    // 初始化
     Measurements()
-    {
+    {   
+        // 第一个点云的时间
         lidar_begin_time = 0.0;
+        // PCL点云类型
         this->lidar.reset(new PointCloudType());
     };
+    // 点云的起始和结束时间
     double lidar_begin_time;
     double lidar_end_time;
     PointCloudType::Ptr lidar;
+    // imu的对象
     std::deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu;
 };
 
@@ -167,6 +176,15 @@ public:
     double kf_angle_deg;          // 关键帧角度阈值（度）
     double min_filter_size_surf;  // 表面过滤最小尺寸
     double min_filter_size_map;   // 地图过滤最小尺寸
+    double time_diff_lidar_imu;   // lidar 和 imu 之间的时间漂移
+    double cov_gyroscope;         // 陀螺仪协方差
+    double cov_acceleration;      // 加速度计协方差
+    double cov_bias_gyroscope;    // 陀螺仪偏置协方差
+    double cov_bias_acceleration; // 加速度计偏置协方差
+
+    // vector类型变量
+    vector<double> extRotV;       // 旋转外参
+    vector<double> extTransV;     // 平移外参
 
 
 
@@ -243,6 +261,32 @@ public:
 
         declare_parameter("min_filter_size_map", 0.5);
         get_parameter("min_filter_size_map", min_filter_size_map);
+
+        declare_parameter("time_diff_lidar_imu", 0.0);
+        get_parameter("time_diff_lidar_imu", time_diff_lidar_imu);
+
+        declare_parameter("cov_gyroscope", 0.1);
+        get_parameter("cov_gyroscope", cov_gyroscope);
+
+        declare_parameter("cov_acceleration", 0.1);
+        get_parameter("cov_acceleration", cov_acceleration);
+
+        declare_parameter("cov_bias_gyroscope", 0.0001);
+        get_parameter("cov_bias_gyroscope", cov_bias_gyroscope);
+
+        declare_parameter("cov_bias_acceleration", 0.0001);
+        get_parameter("cov_bias_acceleration", cov_bias_acceleration);
+
+        // vector类型变量
+        vector<double> t = {0.0, 0.0, 0.0};
+        declare_parameter("extrinsic_T", t);
+        get_parameter("extrinsic_T", extTransV);
+        vector<double> r = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+        declare_parameter("extrinsic_R", r);
+        get_parameter("extrinsic_R", extRotV);
+        
+
+        
 
 
         

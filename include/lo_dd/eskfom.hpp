@@ -2,7 +2,7 @@
  * @Author: DMUZhangXianglong 347913076@qq.com
  * @Date: 2024-12-15 12:42:30
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
- * @LastEditTime: 2025-02-09 18:26:07
+ * @LastEditTime: 2025-02-17 10:19:47
  * @FilePath: /LO-DD/include/lo_dd/eskfom.hpp
  * @Description: 
  */
@@ -12,24 +12,24 @@
 #include "utility.hpp"
 #include "ikd_Tree.h"
 
-const double epsi = 0.001; // ESKF迭代时，如果dx<epsi 认为收敛
-using covariance_matrix = Eigen::Matrix<double, 24, 24>;
-using state_vector = Eigen::Matrix<double, 24, 1>;
+const double epsi = 0.001; // ESKF迭代时，如果dx < epsi 认为收敛
+using covariance_matrix = Eigen::Matrix<double, 24, 24>; // 协方差矩阵形式
+using state_vector = Eigen::Matrix<double, 24, 1>;       // 状态向量形式
 
 namespace esekfom{
-    PointCloudType::Ptr normvec(new PointCloudType(100000, 1));		  //特征点在地图中对应的平面参数(平面的单位法向量,以及当前点到平面距离)
-    PointCloudType::Ptr laserCloudOri(new PointCloudType(100000, 1)); //有效特征点
-    PointCloudType::Ptr corr_normvector(new PointCloudType(100000, 1)); //有效特征点对应点法相量
-    bool point_selected_surf[100000] = {1};							  //判断是否是有效特征点(c++ 1表示true 0表示false)
+    PointCloudType::Ptr normvec(new PointCloudType(100000, 1));		    // 特征点在地图中对应的平面参数(平面的单位法向量,以及当前点到平面距离)
+    PointCloudType::Ptr laserCloudOri(new PointCloudType(100000, 1));   // 有效特征点
+    PointCloudType::Ptr corr_normvector(new PointCloudType(100000, 1)); // 有效特征点对应点法相量
+    bool point_selected_surf[100000] = {1};							    // 判断是否是有效特征点(c++ 1表示true 0表示false)
 
 
-
+    // 动态共享数据
     struct  dynamic_share_data
     {
         bool valid;                                                // 有效特征点数是否满足需求
         bool converge;                                             // 迭代时是否收敛
         Eigen::Matrix<double, Eigen::Dynamic, 1> h;	               // 残差 (公式(14)中的z)
-        Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> h_x; //雅可比矩阵H (公式(14)中的H)
+        Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> h_x; // 雅可比矩阵H (公式(14)中的H)
     };
     
 
@@ -37,7 +37,7 @@ namespace esekfom{
     class eskf
     {
         private:
-            state_ikfom x_;                                         // 状态量24维                                     
+            state_ikfom x_;                                         // 状态量 24 维                                     
             covariance_matrix P_ = covariance_matrix::Identity();   // 协方差矩阵
 
         public:
@@ -293,46 +293,53 @@ namespace esekfom{
                                                                                 
             }
 
-
+            // 获取当前状态
             state_ikfom getState()
             {
                 return x_;
             }
-
+            
+            // 获取当前协方差矩阵
             covariance_matrix getCovarianceMatrix()
             {
                 return P_;
             }
-
+            
+            // 设置当前状态
             void setState(state_ikfom &input_state)
             {
                 x_ = input_state;
             }
 
+            // 设置协方差矩阵
             void setCovarianceMatrix(covariance_matrix &input_cov_mat)
             {   
                 P_ = input_cov_mat;
             }
 
             /**
-             * @brief 利用imu进行状态预测
+             * @brief 利用imu进行状态预测，向前递推状态，在整个预测过程中是不考虑噪声的
              * 
              * @param dt 时间
              * @param Q  噪声的协方差矩阵
-             * @param u  输入
+             * @param u  imu测量
              */
             void satePredict(double &dt, Eigen::Matrix<double, 12, 12> &Q, const input_ikfom &u)
-            {
-                Eigen::Matrix<double, 24, 1> f_ = get_f(x_, u);	  
-                Eigen::Matrix<double, 24, 24> f_x_ = df_dx(x_, u); 
-                Eigen::Matrix<double, 24, 12> f_w_ = df_dw(x_, u); 
-
-                x_ = boxplus(x_, f_ * dt); //前向传播 公式(4)
+            {   
+                // 利用IMU测量数据，预测状态和协方差矩阵
+                Eigen::Matrix<double, 24, 1>  f_ = get_f(x_, u);	  
+                Eigen::Matrix<double, 24, 24> f_x_ = df_dx(x_, u);  
+                Eigen::Matrix<double, 24, 12> f_w_ = df_dw(x_, u);   
+                
+                // 利用 imu 向前递推状态
+                x_ = boxplus(x_, f_ * dt);                          //前向传播 公式(4)
+                
 
                 f_x_ = Eigen::Matrix<double, 24, 24>::Identity() + f_x_ * dt;   //之前Fx矩阵里的项没加单位阵，没乘dt   这里补上
-
-                P_ = (f_x_)*P_ * (f_x_).transpose() + (dt * f_w_) * Q * (dt * f_w_).transpose(); 
-            
+                
+                // 预测协方差矩阵
+                P_ = (f_x_) * P_ * (f_x_).transpose() + (dt * f_w_) * Q * (dt * f_w_).transpose(); 
+                
             }
 
             /**
@@ -345,15 +352,21 @@ namespace esekfom{
             state_ikfom boxplus(state_ikfom x, Eigen::Matrix<double, 24, 1> f_in)
             {
                 state_ikfom x_return;
+                // 位置
                 x_return.position = x.position + f_in.block<3, 1>(0, 0);
+                // 姿态
                 x_return.rotation_matrix  = x.rotation_matrix * SO3::exp(f_in.block<3, 1>(3, 0));
-                
+                // 外参
                 x_return.offset_R_L_I = x.offset_R_L_I * SO3::exp(f_in.block<3, 1>(6, 0));
                 x_return.offset_T_L_I = x.offset_T_L_I + f_in.block<3, 1>(9, 0); 
                 
+                // 速度
                 x_return.velocity = x.velocity + f_in.block<3, 1>(12, 0);
+                // 角速度偏置
                 x_return.bg = x.bg + f_in.block<3, 1>(15, 0);
+                // 加速度偏置
                 x_return.ba = x.ba + f_in.block<3, 1>(18, 0);
+                // 重力加速度度
                 x_return.gravity =  x.gravity + f_in.block<3, 1>(21, 0);
 
                 return x_return;
@@ -369,11 +382,14 @@ namespace esekfom{
             state_vector boxminus(state_ikfom x1, state_ikfom x2)
             {
                 state_vector x_return = state_vector::Zero();
+                // 位置
                 x_return.block<3, 1>(0, 0) = x1.position - x2.position;
                 
+                // 姿态和外参 x1 he x2如果是 SO3 那么 x1-x2 = Log(x2^T*x2)
                 x_return.block<3, 1>(3, 0) = SO3(x2.rotation_matrix.matrix().transpose() * x1.rotation_matrix.matrix()).log();
                 x_return.block<3, 1>(6, 0) = SO3(x2.offset_R_L_I.matrix().transpose() * x1.offset_R_L_I.matrix()).log();
 
+                // 外参 速度 角速度偏置 加速度偏置 重力，向量直接相减 
                 x_return.block<3, 1>(9, 0) = x1.offset_T_L_I - x2.offset_T_L_I;
                 x_return.block<3, 1>(12, 0) = x1.velocity - x2.velocity;
                 x_return.block<3, 1>(15, 0) = x1.bg - x2.bg;

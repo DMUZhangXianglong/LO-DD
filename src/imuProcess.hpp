@@ -2,7 +2,7 @@
  * @Author: DMUZhangXianglong 347913076@qq.com
  * @Date: 2024-12-14 15:35:15
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
- * @LastEditTime: 2024-12-21 03:18:13
+ * @LastEditTime: 2025-02-18 12:21:01
  * @FilePath: /LO-DD/src/imuProcess.hpp
  * @Description: 实现IMU处理部分
  */
@@ -39,10 +39,10 @@ class ImuProcess
         PointCloudType::Ptr current_points_distorted; // 当前帧未去畸变的点云
         sensor_msgs::msg::Imu::ConstSharedPtr last_imu;     // 上一帧IMU指针
         std::vector<Pose6D> IMUpose;                  // Pose6D IMU 位姿向量（反向传播）
-        Mat3d R_LiDAR_2_IMU;                          //           
-        Vec3d T_LidAR_2_IMU;            
-        Vec3d mean_acceleration;                        
-        Vec3d mean_gyroscope;
+        Mat3d R_LiDAR_2_IMU;                          // 雷达到IMU旋转外参          
+        Vec3d T_LidAR_2_IMU;                          // 雷达到IMU平移外参
+        Vec3d mean_acceleration;                      // 平均加速度
+        Vec3d mean_gyroscope;                         // 平均角速度      
         
         Vec3d last_gyroscope;
         Vec3d last_acceleration;
@@ -50,7 +50,7 @@ class ImuProcess
 
         double start_time_;                           // 开始时间
         double last_lidar_end_time_;                  // 上一帧lidar结束时间戳
-        int init_iter_num;                            // 初始迭代次数
+        int init_iter_num;                            // 初始化所需要的IMU数据个数
         bool FIRST_FRAME_IMU = true;                  // 是否为第一帧
         bool imu_need_init = true;                    // IMU是否需要初始化
 
@@ -90,12 +90,16 @@ class ImuProcess
          * 
          */
         void imuReset()
-        {
+        {   
+            RCLCPP_INFO_STREAM(rclcpp::get_logger("IMU_Process"), "reset imu.");
+            // 平均加速度
             mean_acceleration     = Vec3d(0 ,0, -1.0);
+            // 平均角速度
             mean_gyroscope        = Vec3d(0, 0, 0);
+            // 上一次角速度
             last_gyroscope        = ZeroV3d;
             imu_need_init         = true;
-            start_time_       = -1;
+            start_time_           = -1;
             init_iter_num         = 1;
             // v_imu  ？
             IMUpose.clear();
@@ -104,7 +108,7 @@ class ImuProcess
         }
 
         /**
-         * @brief Set the Parameters object
+         * @brief 设置参数
          * 
          * @param t_L_2_I 
          * @param R_L_2_I 
@@ -123,19 +127,30 @@ class ImuProcess
             cov_bias_acceleration = cov_bias_acceleration_in; 
         }
 
+        /**
+         * @brief IMU初始化
+         * 
+         * @param measurement IMU和LiDAR测量数据
+         * @param kf 滤波器
+         * @param N 迭代次数
+         */
         void imuInit(const Measurements &measurement, esekfom::eskf &kf, int &N)
         {
             Vec3d current_acceleration, current_gyroscope; // 当前加速度和角速度
 
+            // 如果是第一帧IMU
             if (FIRST_FRAME_IMU)
-            {
+            {   
+                // 重置IMU
                 imuReset();
                 N = 1;
+                // 取出测量中的IMU数据
                 const auto &imu_acceleration = measurement.imu.front()->linear_acceleration;
                 const auto &imu_gyroscope = measurement.imu.front()->angular_velocity;
                 mean_acceleration << imu_acceleration.x, imu_acceleration.y, imu_acceleration.z;
                 mean_gyroscope << imu_gyroscope.x, imu_gyroscope.y, imu_gyroscope.z;
-                first_lidar_time = measurement.lidar_begin_time;                                    // 当前测量的一个雷达点时间
+                // 取出前测量点云开始时间
+                first_lidar_time = measurement.lidar_begin_time;                                    
                 FIRST_FRAME_IMU = false;
             }
 
@@ -147,17 +162,19 @@ class ImuProcess
                 current_acceleration << imu_acceleration.x, imu_acceleration.y, imu_acceleration.z;
                 current_gyroscope << imu_gyroscope.x, imu_gyroscope.y, imu_gyroscope.z;
                 
-                // 计算平均值
+                // 均值递推
                 mean_acceleration += (current_acceleration - mean_acceleration) / N;
                 mean_gyroscope    += (current_gyroscope - mean_gyroscope) / N;
 
-                // 加速度和角速度方差更新
+                // 加速度和角速度方差递推 参考：https://blog.csdn.net/dshf_1/article/details/106132251
                 cov_acceleration = cov_acceleration * (N - 1.0) / N + (current_acceleration - mean_acceleration).cwiseProduct(current_acceleration - mean_acceleration) / N;
                 cov_gyroscope = cov_gyroscope * (N - 1.0) / N + (current_gyroscope - mean_gyroscope).cwiseProduct(current_gyroscope - mean_gyroscope)  / N / N * (N-1);
-               
+                
+                // IMU
                 N++;
             }
-
+            
+            // 初始状态
             state_ikfom init_state = kf.getState();
             init_state.gravity = - mean_acceleration / mean_acceleration.norm() * G_m_s2;
             init_state.bg = mean_gyroscope; // 初始的角速度偏置为角速度的平均值
@@ -198,7 +215,8 @@ class ImuProcess
 
             // 判断是否需要初始化
             if(imu_need_init)
-            {
+            {   
+                // imu初始化
                 imuInit(measurement, kf, init_iter_num);
                 
                 imu_need_init = true;

@@ -11,21 +11,35 @@
     sensor: velodyne                                    # 传感器类型
 
     # pointCloudTopic: "/rslidar_points"  
-    # sensor: robosense                                   # 传感器类型
+    # sensor: robosense                                     # 传感器类型
 
     # pointCloudTopic: "/os_cloud_node/points"              # 点云话题
     # sensor: ouster                                        # 传感器类型
 
-    imuTopic: "/imu/data"                                          # IMU话题名
+    imuTopic: "/imu/data"                                 # IMU话题名
     
 
 
-    # LiDAR参数
+    # LiDAR 和 IMU 参数
     num_scans: 16                                         # LiDAR线数
+    time_diff_lidar_imu: 0.0                              # LIDAR和IMU之间的时间漂移
+    cov_gyroscope: 0.1                                    # 陀螺仪协方差
+    cov_acceleration: 0.1                                 # 加速度计协方差
+    cov_bias_gyroscope: 0.0001                            # 陀螺仪偏置协方差
+    cov_bias_acceleration: 0.0001                         # 加速度计偏置协方差
+
+
+    extrinsic_T: [0.0, 0.0, 0.0]                          # 外参平移
+    
+    extrinsic_R: [1.0, 0.0, 0.0,                          # 外参旋转
+                  0.0, 1.0, 0.0,
+                  0.0, 0.0, 1.0]      
+
 
     # 卡尔曼滤波器参数
     kf_max_iteration: 5                                   # 最大迭代次数
     extrinsic_estamiton_en: false                         # 是否估计外参
+                    
 
     # 
     min_edge_pts: 20                                      # 最小角点数

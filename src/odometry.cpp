@@ -1,7 +1,7 @@
 /*
  * @Author: DMU zhangxianglong
  * @Date: 2024-11-18 11:34:52
- * @LastEditTime: 2025-02-09 19:04:29
+ * @LastEditTime: 2025-02-18 12:37:26
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
  * @FilePath: /LO-DD/src/lidarOdometry.cpp
  * @Description: 实现激光里程计
@@ -56,13 +56,14 @@ public:
     
 
     // IMU 和 LiDAR
+    int lidar_count, imu_count;
     std::deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu_buffer;
-    std::deque<PointCloudType::Ptr> lidar_buffer;
-    std::deque<double> time_buffer;
+    std::deque<PointCloudType::Ptr> lidar_buffer; // 面点的缓存队列
+    std::deque<double> lidar_time_buffer; // 雷达时间队列
     bool isFirstLiDAR, lidar_pushed;
     double last_timestamp_imu, last_timestamp_lidar, lidar_end_time;
-    double lidar_mean_scantime;
-    int scan_num;
+    double lidar_mean_scantime; // 雷达平均扫描时间
+    int scan_num; 
     Measurements measurement;
     bool FIRST_SCAN;
     double first_lidar_time;  // 当前测量第一个lidar点时间
@@ -74,6 +75,8 @@ public:
     bool ekf_is_inited; 
     pcl::VoxelGrid<PointType> downSizeFilterSurf; // 降采样器
     int feature_dsf_size; // 降采样后点云大小
+    Mat3d R_LiDAR_2_IMU; // LiDAR到IMU的旋转矩阵
+    Vec3d T_LiDAR_2_IMU; // LiDAR到IMU的平移向量
 
 
     
@@ -136,14 +139,14 @@ public:
     
     Odometry(const rclcpp::NodeOptions & options) : ParamServer("lo_dd_odometry", options)
     {   
-        // 订阅角点和面点
+        // 订阅角点和面点 点云
         subEdgeCloud = create_subscription<sensor_msgs::msg::PointCloud2>("/lo_dd/edge_points", qos_lidar, std::bind(&Odometry::edgeCloudHandler, this, std::placeholders::_1));
         subSurfaceCloud = create_subscription<sensor_msgs::msg::PointCloud2>("/lo_dd/surf_points", qos_lidar, std::bind(&Odometry::surfaceCloudHandler, this, std::placeholders::_1));
         
         // subEdgeCloud = create_subscription<sensor_msgs::msg::PointCloud2>(pointCloudTopic, qos, std::bind(&Odometry::edgeCloudHandler, this, std::placeholders::_1));
         // subSurfaceCloud = create_subscription<sensor_msgs::msg::PointCloud2>(pointCloudTopic, qos, std::bind(&Odometry::surfaceCloudHandler, this, std::placeholders::_1));
         
-        // 订阅imu
+        // 订阅imu数据
         subImu = create_subscription<sensor_msgs::msg::Imu>(imuTopic, qos_imu, std::bind(&Odometry::imuHandler, this, std::placeholders::_1));
         
         // 里程计
@@ -207,8 +210,16 @@ public:
         add_point_size = 0;
         downSizeFilterSurf.setLeafSize(min_filter_size_surf, min_filter_size_surf, min_filter_size_surf);
 
-        // imu_process.reset(new ImuProcess());
+        // 初始化IMU处理对象
         imu_process = std::make_shared<ImuProcess>();
+        // 设置imu处理对象的参数
+        T_LiDAR_2_IMU << VEC_FROM_ARRAY(extTransV);
+        R_LiDAR_2_IMU << MAT_FROM_ARRAY(extRotV);
+        imu_process->setParameters(T_LiDAR_2_IMU, R_LiDAR_2_IMU, 
+        Vec3d(cov_gyroscope, cov_gyroscope, cov_gyroscope), 
+        Vec3d(cov_acceleration, cov_acceleration, cov_acceleration), 
+        Vec3d(cov_bias_gyroscope, cov_bias_gyroscope, cov_bias_gyroscope), 
+        Vec3d(cov_bias_acceleration, cov_bias_acceleration, cov_bias_acceleration));
         
     }
     
@@ -233,11 +244,16 @@ public:
 
 
     /**
-     * @brief 
+     * @brief LIDAR-惯性里程计
      * 
      */
     void odometryHandler()
-    {
+    {   
+        /**
+         * @brief
+         * 1 首先打包测量数据
+         * 2 如果打包成功进入后续处理
+         */
         if (synchronizeMeasurements(measurement))
         {
             if (FIRST_SCAN)
@@ -247,10 +263,11 @@ public:
                 FIRST_SCAN = false;
                 return;
             }
-
+            
             // 前向传播，反向传播，点云运动补偿 最后得到去畸变后的点云 feature_undistort
             imu_process->process(measurement, kf, feature_undistort);
-
+            
+            // 检查去畸变后的点云是否正常
             if (feature_undistort->empty() || feature_undistort == NULL)
             {
                 RCLCPP_WARN_STREAM(this->get_logger(), "The feature_undistort is empty skip this scan.");
@@ -322,7 +339,7 @@ public:
             // 雷达在世界坐标系下的位置
             LiDAR_position_w = state_now.position + state_now.rotation_matrix.matrix() * state_now.offset_T_L_I;
             /*    迭代状态估计   */ 
-
+            
 
             // 发布里程计
             // 
@@ -351,57 +368,67 @@ public:
     /**
      * @brief 打包当前要处理的测量数据
      *  
-     * @param currernt_measurement 
+     * @param currernt_measurement 当前的测量数据，点云面特征和IMU数据
      * @return true 
      * @return false 
      */
     bool synchronizeMeasurements(Measurements &currernt_measurement)
-    {
+    {   
+        
         if(lidar_buffer.empty() || imu_buffer.empty())
         {
             RCLCPP_WARN_STREAM(this->get_logger(), "no lidar or imu , please check.");
             return false;
         }
-
+        
+        // 从雷达缓存队列中取数据
         if (!lidar_pushed)
-        {
+        {   
+            // 取出当前点云和时间
             currernt_measurement.lidar = lidar_buffer.front();
-            currernt_measurement.lidar_begin_time = time_buffer.front();
+            currernt_measurement.lidar_begin_time = lidar_time_buffer.front();
             
             if (currernt_measurement.lidar->points.size() <= 1)
             {
-                lidar_end_time = currernt_measurement.lidar_begin_time + lidar_mean_scantime;              // 这里雷达平均扫描时间为 0 
+                lidar_end_time = currernt_measurement.lidar_begin_time + lidar_mean_scantime;              // 雷达平均扫描时间初始值为 0,后续是算出来 
                 RCLCPP_WARN_STREAM(this->get_logger(), "Too few input point cloud.");
             }
             else if (currernt_measurement.lidar->back().curvature / double(1000) < 0.5 * lidar_mean_scantime) 
             {
                 lidar_end_time = currernt_measurement.lidar_begin_time + lidar_mean_scantime;
             }
+            // 正常情况
             else
-            {
+            {   
+                // 计算结束时间和平均扫描时间
                 scan_num++;
                 lidar_end_time  = currernt_measurement.lidar_begin_time + currernt_measurement.lidar->points.back().curvature / double(1000.0);
                 lidar_mean_scantime += (currernt_measurement.lidar->points.back().curvature / double(1000) - lidar_mean_scantime) / scan_num;
             }
 
             currernt_measurement.lidar_end_time = lidar_end_time;
+            // 当前帧雷达数据已经 pop 出
             lidar_pushed = true;
             
         }
 
+        // 上一帧imu时间戳小于当前帧雷达结束时间，说明imu数据没收集够，返回
         if (last_timestamp_imu < lidar_end_time)
         {
-            RCLCPP_WARN_STREAM(this->get_logger(), "The latest imu is in LiDAR time range");
+            RCLCPP_WARN_STREAM(this->get_logger(), "The imu data is not enough.");
             return false;
         }
 
-        // buffer 中的第 i 个imu的时间
-        double imu_time_i = getTimeSec(imu_buffer.front()->header.stamp);
+        // imu buffer中的最前面一帧imu数据的时间戳
+        double front_imu_time = getTimeSec(imu_buffer.front()->header.stamp);
         currernt_measurement.imu.clear();
-        while (!imu_buffer.empty() && (imu_time_i < lidar_end_time))
+        
+        // imu buffer不是空，且buffer的前面imu时间戳小于当前帧雷达结束时间
+        while (!imu_buffer.empty() && (front_imu_time < lidar_end_time))
         {
-            imu_time_i = getTimeSec(imu_buffer.front()->header.stamp);
-            if (imu_time_i < lidar_end_time)
+            front_imu_time = getTimeSec(imu_buffer.front()->header.stamp);
+            
+            if (front_imu_time < lidar_end_time)
             {
                 break;
             }
@@ -410,46 +437,54 @@ public:
         }
 
         lidar_buffer.pop_front();
-        time_buffer.pop_front();
+        lidar_time_buffer.pop_front();
+        
         lidar_pushed = false;
         
-        return false;
+        return true;
     }   
 
 
 
     /**
-     * @brief 订阅IMU数据
+     * @brief 订阅IMU数据并且处理
      * 
      * @param imuMsg 
      */
     void imuHandler(const sensor_msgs::msg::Imu::SharedPtr imuMsg)
     {
+        // 接收IMU消息
+        imu_count++;
         sensor_msgs::msg::Imu::SharedPtr imu_msg(new sensor_msgs::msg::Imu(*imuMsg));
 
-        // 处理时间
-        imu_msg->header.stamp = getRosTime(getTimeSec(imuMsg->header.stamp));  // 此处忽略了 imu 与lidar之间的时间漂移
+        // 处理时间戳 先转为 double 类型的, 再转回ros2
+        imu_msg->header.stamp = getRosTime(getTimeSec(imuMsg->header.stamp) - time_diff_lidar_imu);  // 此处忽略了 imu 与lidar之间的时间漂移
+        
+        // 暂时不需要
+        if (abs(time_diff_lidar_imu) > 0.1)
+        {
+            /* code */
+        }
+        
 
-        // 获取纠偏后的时间戳 
-        double timestamp = getTimeSec(imu_msg->header.stamp);
+        // 获取纠偏后的 imu 时间戳 
+        double current_imu_timestamp = getTimeSec(imu_msg->header.stamp);
         
         mtx_buffer.lock();
 
-        if (timestamp < last_timestamp_lidar)
+        if (current_imu_timestamp < last_timestamp_lidar)
         {
             RCLCPP_WARN_STREAM(this->get_logger(), "imu data is in lidar range, clear buffer");
             imu_buffer.clear();
         }
         
-        last_timestamp_imu = timestamp;
-
+        // IMU数据放入缓存队列
+        last_timestamp_imu = current_imu_timestamp;
         imu_buffer.push_back(imu_msg);
-
         mtx_buffer.unlock();
         sig_buffer.notify_all();
         
     }
-
 
 
     void edgeCloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr edgeCloudMsg)
@@ -468,29 +503,37 @@ public:
     
     void surfaceCloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr surfaceCloudMsg)
     {   
+        lidar_count++;
         mtx_buffer.lock();
+        // ros2 msg 转 PCL
         PointCloudType::Ptr current_point_cloud(new PointCloudType());
         pcl::moveFromROSMsg(*surfaceCloudMsg, *current_point_cloud);
-
+        
+        // 获取当前时间 秒
         double current_lidar_time = getTimeSec(surfaceCloudMsg->header.stamp);
-        if(!isFirstLiDAR && current_lidar_time < last_timestamp_lidar)
+        // 检查时间戳
+        if(current_lidar_time < last_timestamp_lidar)
         {
             RCLCPP_WARN_STREAM(this->get_logger(), "lidar loop back, clear buffer.");
             lidar_buffer.clear();
         }
-        if(isFirstLiDAR)
-        {
-            isFirstLiDAR = false;
-        }
+        
+        // 似乎没用
+        // if(isFirstLiDAR)
+        // {
+        //     isFirstLiDAR = false;
+        // }
 
+        // 点云 时间戳放入队列
         lidar_buffer.push_back(current_point_cloud);
-        time_buffer.push_back(current_lidar_time);
-        last_timestamp_lidar = current_lidar_time;
+        // 这里的时间戳是该帧点云的采样时间
+        lidar_time_buffer.push_back(current_lidar_time);
+        last_timestamp_lidar = current_lidar_time;   
 
         mtx_buffer.unlock();
         sig_buffer.notify_all();
 
-        
+        // SAD
         header = surfaceCloudMsg->header;
        *currentSurfaceCloud = *current_point_cloud;
         
@@ -530,6 +573,10 @@ public:
         // " surf" << surfaceHeader.stamp.sec << "." << surfaceHeader.stamp.nanosec);
     } 
     
+    /**
+     * @brief 退化检测
+     * 
+     */
     void degeneracyDetection()
     {
         

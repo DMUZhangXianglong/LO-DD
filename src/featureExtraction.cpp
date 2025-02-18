@@ -2,7 +2,7 @@
  * @Author: DMUZhangXianglong 347913076@qq.com
  * @Date: 2024-11-18 23:16:36
  * @LastEditors: DMUZhangXianglong 347913076@qq.com
- * @LastEditTime: 2025-01-10 09:43:38
+ * @LastEditTime: 2025-02-14 20:41:43
  * @FilePath: /LO-DD/src/featureExtraction.cpp
  * @Description: 实现特征提取类
  */
@@ -24,6 +24,8 @@
 //     (uint16_t, ring, ring) (float, time, time)
 // )
 
+
+// ouster点云结构
 struct OusterPointXYZIRT {
     PCL_ADD_POINT4D;
     float intensity;
@@ -79,10 +81,13 @@ POINT_CLOUD_REGISTER_POINT_STRUCT (RoboSensePointXYZIRT,
 )
 
 class FeatureExtraction : public ParamServer
-{
+{   
+    // 
     struct IdAndValue
     {
         IdAndValue(){}
+
+
         IdAndValue(int id, double value) : id_(id), value_(value){}
         int id_ = 0;
         double value_ = 0; 
@@ -91,45 +96,51 @@ class FeatureExtraction : public ParamServer
     private:
         /* data */
     public:
-        std::mutex mtx_buffer;
-        std::deque<sensor_msgs::msg::PointCloud2> cloud_msg_queue;
+        std::mutex mtx_buffer; // buffer 锁
+        std::deque<sensor_msgs::msg::PointCloud2> cloud_msg_queue; // 原始点云队列 
         
         
         int scan_count;
         bool is_first_lidar;
         
-        
-        sensor_msgs::msg::PointCloud2 currentCloudMsg;
+        sensor_msgs::msg::PointCloud2 currentCloudMsg; // 当前要处理的原始点云 ROS2 形式
         std_msgs::msg::Header cloudHeader;
+        
         // 发布edge点和surface点
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubEdgePoints;
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubSurfacePoints;
         
+
         pcl::PointCloud<velodyne::Point>::Ptr velodyne_cloud;
         pcl::PointCloud<RoboSensePointXYZIRT>::Ptr tmpRoboSenseCloudIn;
         pcl::PointCloud<OusterPointXYZIRT>::Ptr tmpOusterCloudIn;
-       
-        PointCloudType::Ptr edge_points;
-        PointCloudType::Ptr surf_points;
-        PointCloudType::Ptr full_points;
+
+        PointCloudType::Ptr edge_points; // 角点
+        PointCloudType::Ptr surf_points; // 面点
+        PointCloudType::Ptr full_points; // 所有点
         
 
 
         // 订阅点云原始数据
         rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subLaserCloud;
 
-
+        // 构造函数
         FeatureExtraction(const rclcpp::NodeOptions &options) : ParamServer("lo_dd_featureExtraction", options)
         {
+            // 订阅
             subLaserCloud = create_subscription<sensor_msgs::msg::PointCloud2>(pointCloudTopic, qos_lidar, std::bind(&FeatureExtraction::cloudHandler, this, std::placeholders::_1));
+            // 发布
             pubEdgePoints = create_publisher<sensor_msgs::msg::PointCloud2>("/lo_dd/edge_points", 1);
             pubSurfacePoints = create_publisher<sensor_msgs::msg::PointCloud2>("/lo_dd/surf_points", 1);
-
+            // 分配内存
             allocateMemory();
+            // 重置
             reset();
         }
         
+        // 析构函数
         ~FeatureExtraction(){}
+        
         /**
          * @brief 订阅点云数据进行特征提取并且发布
          * 
@@ -139,8 +150,12 @@ class FeatureExtraction : public ParamServer
         {   
             // RCLCPP_INFO_STREAM(this->get_logger(), "cloudHandler is running");
 
+            // 缓存点云，如果缓存失败就返回
+            if (!cachePointCloud(laserCloudMsg))
+            {
+                return;
+            }
             
-            cachePointCloud(laserCloudMsg);
             
             // 计时开始
             // auto start = getCurrentTime();
@@ -156,6 +171,11 @@ class FeatureExtraction : public ParamServer
                 publishPointCloud(pubEdgePoints, edge_points, laserCloudMsg->header.stamp, lidarFrame);
                 publishPointCloud(pubSurfacePoints, surf_points, laserCloudMsg->header.stamp, lidarFrame);
             }
+            else
+            {
+                RCLCPP_WARN_STREAM(this->get_logger(), "点云发布出现问题");
+
+            }
             // RCLCPP_INFO_STREAM(this->get_logger(), "edge_points "  <<  edge_points->size() <<" surf_points " << surf_points->size());
         
             // reset();
@@ -164,9 +184,11 @@ class FeatureExtraction : public ParamServer
 
         void allocateMemory()
         {
+            
             scan_count = 0;
             is_first_lidar = true;
             velodyne_cloud.reset(new pcl::PointCloud<velodyne::Point>());
+            
             tmpRoboSenseCloudIn.reset(new pcl::PointCloud<RoboSensePointXYZIRT>());
             tmpOusterCloudIn.reset(new pcl::PointCloud<OusterPointXYZIRT>());       
 
@@ -186,7 +208,10 @@ class FeatureExtraction : public ParamServer
          */
         bool cachePointCloud(const sensor_msgs::msg::PointCloud2::SharedPtr& laserCloudMsg)
         {
+            // 点云msg的个数
             scan_count++;
+            
+            // 原始点云队列
             cloud_msg_queue.push_back(*laserCloudMsg);
             
             if (cloud_msg_queue.size() <= 2)
@@ -198,6 +223,7 @@ class FeatureExtraction : public ParamServer
             cloud_msg_queue.pop_front();
             cloudHeader = currentCloudMsg.header;
             
+            // 处理 velodyne 雷达数据
             if (sensor == SensorType::VELODYNE)
             {            
                 processVelodyne(currentCloudMsg);
@@ -287,9 +313,11 @@ class FeatureExtraction : public ParamServer
             edge_points->clear();
             surf_points->clear();
             full_points->clear();
-
+            
+            // 把 ros2 msg 转 PCL
             pcl::PointCloud<velodyne::Point>::Ptr original_points(new pcl::PointCloud<velodyne::Point>());
-            pcl::moveFromROSMsg(currentCloudMsg, *original_points);            
+            pcl::moveFromROSMsg(currentCloudMsg, *original_points);
+            
             // 先去除无效点
             if(original_points->is_dense == false)
             {   
@@ -319,8 +347,10 @@ class FeatureExtraction : public ParamServer
             if (original_points->points[points_size - 1].time > 0)
             {
                 // 这里肯定有时间所以先 pass
+                
             }
             
+            // 每条线是vector的一个元素
             points_buff.reserve(num_scans);
             for (int i = 0; i < num_scans; i++)
             {
@@ -346,11 +376,12 @@ class FeatureExtraction : public ParamServer
                 temp_pt.y = original_points->points[i].y;
                 temp_pt.z = original_points->points[i].z;
                 temp_pt.intensity = original_points->points[i].intensity;
+                // 把这个点的时间放在曲率字段里，这个时间相对于该帧点云的相对时间
                 temp_pt.curvature = original_points->points[i].time * 1000;
                 points_buff[num_ring]->points.push_back(temp_pt); 
             }
             
-            // 提取特征
+            // 提取特征 面点 和 角点
             featureExtractEfficient(points_buff, edge_points, surf_points);
             RCLCPP_INFO_STREAM(this->get_logger(), "point: " << surf_points->points.back().curvature);
             
